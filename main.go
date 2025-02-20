@@ -16,25 +16,25 @@ import (
 const (
 	uploadDir = "./uploads"
 	cacheDir  = "./cache"
-	apiToken  = "rosca" // In production, this should be in environment variables
+	apiToken  = "xd" //
 )
 
 var (
 	imageCache *cache.Cache
 )
 
-// authMiddleware validates the API token
+// authMiddleware valida el API token
 func authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetHeader("X-API-Token")
 		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "API token is required"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Se requiere API token"})
 			c.Abort()
 			return
 		}
 
 		if token != apiToken {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API token"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "API token inválido"})
 			c.Abort()
 			return
 		}
@@ -44,61 +44,62 @@ func authMiddleware() gin.HandlerFunc {
 }
 
 func init() {
-	// Create upload and cache directories if they don't exist
+	// Crea los directorios de uploads y cache si no existen
 	for _, dir := range []string{uploadDir, cacheDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			log.Fatalf("Failed to create directory %s: %v", dir, err)
+			log.Fatalf("Error al crear el directorio %s: %v", dir, err)
 		}
 	}
 
-	// Initialize cache with 5 minutes default expiration and 10 minutes cleanup interval
+	// Inicializa el cache con expiración por defecto de 5 minutos y limpieza cada 10 minutos
 	imageCache = cache.New(5*time.Minute, 10*time.Minute)
 }
 
 func main() {
 	r := gin.Default()
 
-	// Set maximum multipart memory
+	// Configura la memoria máxima para multipart
 	r.MaxMultipartMemory = 8 << 20 // 8 MiB
 
-	// Create an API route group with authentication
-	api := r.Group("/api")
-	api.Use(authMiddleware())
+	// Grupo protegido para subir imágenes (requiere token)
+	authGroup := r.Group("/api")
+	authGroup.Use(authMiddleware())
 	{
-		// Protected routes
-		api.POST("/upload", handleImageUpload)
-		api.GET("/image/:filename", serveImage)
-		api.GET("/resize/:filename", resizeImage)
+		authGroup.POST("/upload", handleImageUpload)
 	}
 
-	// Start server
+	// Endpoints públicos para servir y redimensionar imágenes (sin token)
+	r.GET("/api/image/:filename", serveImage)
+	r.GET("/api/resize/:filename", resizeImage)
+
+	// Inicia el servidor
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("Server starting on port %s", port)
+	log.Printf("Servidor iniciando en el puerto %s", port)
 	r.Run(":" + port)
 }
 
 func handleImageUpload(c *gin.Context) {
 	file, err := c.FormFile("image")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No image provided"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No se proporcionó imagen"})
 		return
 	}
 
-	// Generate unique filename
+	// Genera un nombre de archivo único
 	filename := fmt.Sprintf("%d_%s", time.Now().UnixNano(), file.Filename)
 	filepath := filepath.Join(uploadDir, filename)
 
 	if err := c.SaveUploadedFile(file, filepath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save image"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al guardar la imagen"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":  "Image uploaded successfully",
-		"filename": filename,
+		"message":  "Imagen subida correctamente",
+		"filename": "https://cdn.nakamastream.lat/api/image/" + filename,
 	})
 }
 
@@ -106,22 +107,22 @@ func serveImage(c *gin.Context) {
 	filename := c.Param("filename")
 	filepath := filepath.Join(uploadDir, filename)
 
-	// Check if file exists in cache
+	// Verifica si la imagen está en cache
 	if cachedPath, found := imageCache.Get(filename); found {
 		c.File(cachedPath.(string))
 		return
 	}
 
-	// Check if file exists
+	// Verifica si el archivo existe
 	if _, err := os.Stat(filepath); os.IsNotExist(err) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Image not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Imagen no encontrada"})
 		return
 	}
 
-	// Cache the file path
+	// Guarda en cache la ruta del archivo
 	imageCache.Set(filename, filepath, cache.DefaultExpiration)
 
-	// Serve the file
+	// Sirve el archivo
 	c.File(filepath)
 }
 
@@ -130,36 +131,36 @@ func resizeImage(c *gin.Context) {
 	width := c.DefaultQuery("width", "300")
 	height := c.DefaultQuery("height", "300")
 
-	// Generate cache key
+	// Genera una clave de cache para la imagen redimensionada
 	cacheKey := fmt.Sprintf("%s_%s_%s", filename, width, height)
 	
-	// Check cache first
+	// Verifica si la imagen redimensionada ya está en cache
 	if cachedPath, found := imageCache.Get(cacheKey); found {
 		c.File(cachedPath.(string))
 		return
 	}
 
-	// Open original image
+	// Abre la imagen original
 	srcPath := filepath.Join(uploadDir, filename)
 	src, err := imaging.Open(srcPath)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Image not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Imagen no encontrada"})
 		return
 	}
 
-	// Resize image
+	// Redimensiona la imagen
 	resized := imaging.Resize(src, 300, 300, imaging.Lanczos)
 
-	// Save resized image to cache directory
+	// Guarda la imagen redimensionada en el directorio de cache
 	dstPath := filepath.Join(cacheDir, cacheKey)
 	if err := imaging.Save(resized, dstPath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process image"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al procesar la imagen"})
 		return
 	}
 
-	// Cache the resized image path
+	// Guarda la ruta de la imagen redimensionada en cache
 	imageCache.Set(cacheKey, dstPath, cache.DefaultExpiration)
 
-	// Serve the resized image
+	// Sirve la imagen redimensionada
 	c.File(dstPath)
 }
