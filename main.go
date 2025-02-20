@@ -1,3 +1,5 @@
+// Package main implements an image upload and processing service with caching capabilities.
+// It provides REST API endpoints for image upload, serving, and resizing operations.
 package main
 
 import (
@@ -13,17 +15,21 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
+// Constants define the application's configuration parameters
 const (
 	uploadDir = "./uploads" // Directory to store uploaded images
-	cacheDir  = "./cache"   // Directory to store cached images
-	apiToken  = "YOUR CUSTOM API TOKEN"        // API token for authentication
+	cacheDir  = "./cache"   // Directory to store resized/processed images
+	apiToken  = "YOUR CUSTOM API TOKEN"        // Authentication token for protected routes
 )
 
+// Global variables
 var (
-	imageCache *cache.Cache // In-memory cache for storing image paths
+	imageCache *cache.Cache // In-memory cache for optimizing image serving performance
 )
 
-// authMiddleware validates the API token for protected routes
+// authMiddleware implements API token validation for protected routes.
+// It checks for the presence and validity of the X-API-Token header.
+// Returns 401 Unauthorized if the token is missing or invalid.
 func authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetHeader("X-API-Token")
@@ -43,6 +49,8 @@ func authMiddleware() gin.HandlerFunc {
 	}
 }
 
+// init initializes the application by setting up required directories
+// and configuring the in-memory cache with specified expiration times.
 func init() {
 	// Create upload and cache directories if they do not exist
 	for _, dir := range []string{uploadDir, cacheDir} {
@@ -55,6 +63,8 @@ func init() {
 	imageCache = cache.New(5*time.Minute, 10*time.Minute)
 }
 
+// main is the entry point of the application.
+// It sets up the HTTP server, configures routes, and starts listening for requests.
 func main() {
 	r := gin.Default()
 
@@ -81,7 +91,14 @@ func main() {
 	r.Run(":" + port)
 }
 
-// handleImageUpload processes image uploads and saves them to the upload directory
+// handleImageUpload processes incoming image upload requests.
+// It:
+// - Validates the uploaded file
+// - Generates a unique filename
+// - Saves the file to the upload directory
+// - Returns the public URL for accessing the image
+// Returns 400 Bad Request if no image is provided
+// Returns 500 Internal Server Error if the save operation fails
 func handleImageUpload(c *gin.Context) {
 	file, err := c.FormFile("image")
 	if err != nil {
@@ -104,7 +121,13 @@ func handleImageUpload(c *gin.Context) {
 	})
 }
 
-// serveImage retrieves and serves an image from the upload directory
+// serveImage handles requests for retrieving uploaded images.
+// It implements a caching mechanism to improve performance for frequently accessed images.
+// Features:
+// - Checks in-memory cache first
+// - Verifies file existence
+// - Caches file paths for subsequent requests
+// Returns 404 Not Found if the requested image doesn't exist
 func serveImage(c *gin.Context) {
 	filename := c.Param("filename")
 	filepath := filepath.Join(uploadDir, filename)
@@ -128,7 +151,16 @@ func serveImage(c *gin.Context) {
 	c.File(filepath)
 }
 
-// resizeImage resizes an image to specified dimensions and caches the result
+// resizeImage handles image resizing requests with caching.
+// Capabilities:
+// - Resizes images to specified dimensions (defaults to 300x300)
+// - Caches resized versions to avoid redundant processing
+// - Uses high-quality Lanczos resampling
+// Parameters:
+// - width: desired width (optional, default: 300)
+// - height: desired height (optional, default: 300)
+// Returns 404 Not Found if the source image doesn't exist
+// Returns 500 Internal Server Error if resizing fails
 func resizeImage(c *gin.Context) {
 	filename := c.Param("filename")
 	width := c.DefaultQuery("width", "300")
