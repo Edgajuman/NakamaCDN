@@ -196,6 +196,6 @@ func resizeImage(c *gin.Context) {
 	// Store the resized image path in cache
 	imageCache.Set(cacheKey, dstPath, cache.DefaultExpiration)
 
-	// Serve the resized image
+	// Resized image
 	c.File(dstPath)
 }
